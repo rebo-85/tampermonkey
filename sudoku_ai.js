@@ -29,6 +29,15 @@ window.addEventListener("load", function () {
     });
   }
 
+  //   let fontStyle = document.createElement("style");
+  //   fontStyle.innerHTML = `
+  //   body, * {
+  //     font-family: 'Sitka Text', Arial, sans-serif !important;
+  //   }
+  // `;
+  document.head.appendChild(fontStyle);
+  document.head.appendChild(fontStyle);
+
   function extractVGGCells(canvas) {
     let ctx = canvas.getContext("2d");
     let w = canvas.width,
@@ -53,16 +62,11 @@ window.addEventListener("load", function () {
           32,
           32
         );
-        // show cell in DOM for debugging
-        if (y === 0 && x < 9) {
-          tmp.style.border = "1px solid #aaa";
-          tmp.style.margin = "2px";
-          document.body.appendChild(tmp);
-        }
         let arr = tctx.getImageData(0, 0, 32, 32).data;
         let px = [];
         for (let i = 0; i < arr.length; i += 4) {
           let v = (arr[i] + arr[i + 1] + arr[i + 2]) / 3;
+          // boost contrast
           let norm = Math.max(0, Math.min(1, (v / 255 - 0.5) * 2 + 0.5));
           px.push(norm);
           px.push(norm);
@@ -86,11 +90,36 @@ window.addEventListener("load", function () {
     }
     return out;
   }
+
+  function preprocessCanvas(srcCanvas) {
+    let tmp = document.createElement("canvas");
+    tmp.width = srcCanvas.width;
+    tmp.height = srcCanvas.height;
+    let ctx = tmp.getContext("2d");
+    ctx.drawImage(srcCanvas, 0, 0);
+    let img = ctx.getImageData(0, 0, tmp.width, tmp.height);
+    let d = img.data;
+    let contrast = 64; // more contrast
+    let f = (259 * (contrast + 255)) / (255 * (259 - contrast));
+    for (let i = 0; i < d.length; i += 4) {
+      let r = d[i],
+        g = d[i + 1],
+        b = d[i + 2];
+      let gray = 0.299 * r + 0.587 * g + 0.114 * b;
+      let v = f * (gray - 128) + 128;
+      v = Math.max(0, Math.min(255, v));
+      d[i] = d[i + 1] = d[i + 2] = v;
+    }
+    ctx.putImageData(img, 0, 0);
+    return tmp;
+  }
+
   function classifyGridFromCanvas(cb) {
     let cvs = document.querySelector("#game canvas");
     if (!cvs) return cb(null);
     loadClassifier(() => {
-      let cellImgs = extractVGGCells(cvs);
+      let proc = preprocessCanvas(cvs);
+      let cellImgs = extractVGGCells(proc);
       let input = tf.tensor4d(cellImgs, [81, 32, 32, 3]);
       classifier
         .predict(input)
