@@ -1,72 +1,122 @@
 // ==UserScript==
 // @name         Sudoku AI
 // @namespace    rebo.sudoku.ai
-// @version      1.1
-// @description  Solves sudoku
+// @version      1.2
+// @description  Solves sudoku using HF digit classifier
+// @author       ReBo
 // @match        https://sudoku.com/*
 // @grant        none
 // ==/UserScript==
 
 window.addEventListener("load", function () {
-  let puzzle = [
-    [0, 0, 0, 0, 0, 0, 0, 0, 0],
-    [0, 0, 0, 0, 0, 0, 0, 0, 0],
-    [0, 0, 0, 0, 0, 0, 0, 0, 0],
-    [0, 0, 0, 0, 0, 0, 0, 0, 0],
-    [0, 0, 0, 0, 0, 0, 0, 0, 0],
-    [0, 0, 0, 0, 0, 0, 0, 0, 0],
-    [0, 0, 0, 0, 0, 0, 0, 0, 0],
-    [0, 0, 0, 0, 0, 0, 0, 0, 0],
-    [0, 0, 0, 0, 0, 0, 0, 0, 0],
-  ];
+  let puzzle = Array.from({ length: 9 }, () => Array(9).fill(0));
+  let modelLoaded = false;
+  let classifier = null;
 
-  function loadOCR(cb) {
-    if (window.Tesseract) return cb();
-    let s = document.createElement("script");
-    s.src = "https://cdn.jsdelivr.net/npm/tesseract.js@5.0.1/dist/tesseract.min.js";
-    s.onload = cb;
-    document.body.appendChild(s);
-  }
-
-  function runOCR(img, cb) {
-    window.Tesseract.recognize(img, "eng", { logger: (m) => {} }).then(({ data }) => cb(data.text));
-  }
-
-  function getPuzzleFromCanvas(cb) {
-    let cvs = document.querySelector("#game canvas");
-    if (!cvs) return cb(null);
-    let img = cvs.toDataURL();
-    loadOCR(() => {
-      runOCR(img, (txt) => {
-        cb(txt);
-      });
+  function loadClassifier(cb) {
+    if (modelLoaded) return cb();
+    if (!window.tf) {
+      let s = document.createElement("script");
+      s.src = "https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.18.0/dist/tf.min.js";
+      s.onload = () => loadClassifier(cb);
+      document.body.appendChild(s);
+      return;
+    }
+    window.tf.loadLayersModel("https://rebo-85.github.io/Model-Server/sudoku/model.json").then((m) => {
+      classifier = m;
+      modelLoaded = true;
+      cb();
     });
   }
 
-  function txtToGrid(txt) {
-    let rows = txt
-      .replace(/[^\d\n]/g, "")
-      .split("\n")
-      .filter((l) => l.trim().length > 0)
-      .map((l) => l.padEnd(9, "0").slice(0, 9));
-    let grd = [];
-    for (let i = 0; i < 9; i++) {
-      let r = rows[i] || "";
-      let arr = [];
-      for (let j = 0; j < 9; j++) {
-        let v = parseInt(r[j]) || 0;
-        arr.push(v);
+  function extractVGGCells(canvas) {
+    let ctx = canvas.getContext("2d");
+    let w = canvas.width,
+      h = canvas.height;
+    let cellW = w / 9,
+      cellH = h / 9;
+    let cells = [];
+    for (let y = 0; y < 9; y++) {
+      for (let x = 0; x < 9; x++) {
+        let tmp = document.createElement("canvas");
+        tmp.width = 32;
+        tmp.height = 32;
+        let tctx = tmp.getContext("2d");
+        tctx.drawImage(
+          canvas,
+          x * cellW + cellW * 0.18,
+          y * cellH + cellH * 0.18,
+          cellW * 0.64,
+          cellH * 0.64,
+          0,
+          0,
+          32,
+          32
+        );
+        // show cell in DOM for debugging
+        if (y === 0 && x < 9) {
+          tmp.style.border = "1px solid #aaa";
+          tmp.style.margin = "2px";
+          document.body.appendChild(tmp);
+        }
+        let arr = tctx.getImageData(0, 0, 32, 32).data;
+        let px = [];
+        for (let i = 0; i < arr.length; i += 4) {
+          let v = (arr[i] + arr[i + 1] + arr[i + 2]) / 3;
+          let norm = Math.max(0, Math.min(1, (v / 255 - 0.5) * 2 + 0.5));
+          px.push(norm);
+          px.push(norm);
+          px.push(norm);
+        }
+        cells.push(px);
       }
-      grd.push(arr);
     }
-    return grd;
+    let out = [];
+    for (let i = 0; i < 81; i++) {
+      let cell = [];
+      for (let y = 0; y < 32; y++) {
+        let row = [];
+        for (let x = 0; x < 32; x++) {
+          let idx = (y * 32 + x) * 3;
+          row.push([cells[i][idx], cells[i][idx + 1], cells[i][idx + 2]]);
+        }
+        cell.push(row);
+      }
+      out.push(cell);
+    }
+    return out;
+  }
+  function classifyGridFromCanvas(cb) {
+    let cvs = document.querySelector("#game canvas");
+    if (!cvs) return cb(null);
+    loadClassifier(() => {
+      let cellImgs = extractVGGCells(cvs);
+      let input = tf.tensor4d(cellImgs, [81, 32, 32, 3]);
+      classifier
+        .predict(input)
+        .array()
+        .then((preds) => {
+          let grid = [];
+          for (let i = 0; i < 9; i++) {
+            let row = [];
+            for (let j = 0; j < 9; j++) {
+              let idx = i * 9 + j;
+              let p = preds[idx];
+              let maxIdx = p.indexOf(Math.max(...p));
+              row.push(maxIdx === 0 ? 0 : maxIdx);
+            }
+            grid.push(row);
+          }
+          input.dispose();
+          cb(grid);
+        });
+    });
   }
 
-  // OCR inspect trigger
   function inspect() {
-    getPuzzleFromCanvas((txt) => {
-      if (!txt) return;
-      puzzle = txtToGrid(txt);
+    classifyGridFromCanvas((grid) => {
+      if (!grid) return;
+      puzzle = grid;
       console.log("Grid:", puzzle);
     });
   }
@@ -81,7 +131,6 @@ window.addEventListener("load", function () {
       }
       return true;
     }
-
     function solve(board) {
       for (let row = 0; row < 9; row++) {
         for (let col = 0; col < 9; col++) {
@@ -99,21 +148,25 @@ window.addEventListener("load", function () {
       }
       return true;
     }
-
     solve(board);
     return board;
   }
 
-  let f2Lock = false;
+  let sudokuBtn = document.createElement("button");
+  sudokuBtn.textContent = "Sudoku AI";
+  sudokuBtn.style.position = "fixed";
+  sudokuBtn.style.top = "12px";
+  sudokuBtn.style.right = "12px";
+  sudokuBtn.style.zIndex = 9999;
+  sudokuBtn.style.padding = "6px 14px";
+  sudokuBtn.style.background = "#222";
+  sudokuBtn.style.color = "#fff";
+  sudokuBtn.style.border = "none";
+  sudokuBtn.style.borderRadius = "4px";
+  sudokuBtn.style.cursor = "pointer";
+  document.body.appendChild(sudokuBtn);
 
-  document.addEventListener("keydown", (e) => {
-    if (e.key === "F2" && !f2Lock) {
-      f2Lock = true;
-      inspect();
-    }
-  });
-
-  document.addEventListener("keyup", (e) => {
-    if (e.key === "F2") f2Lock = false;
-  });
+  sudokuBtn.onclick = () => {
+    inspect();
+  };
 });

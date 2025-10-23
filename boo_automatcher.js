@@ -18,7 +18,7 @@
 // @connect      images.prod.boo.dating
 // ==/UserScript==
 
-const MODEL_BASE_URL = "https://rebo-85.github.io/BeautyPredict-Server/face-api.js/weights";
+const MODEL_BASE_URL = "https://rebo-85.github.io/Model-Server/face-api.js/weights";
 let automatcherStarted = false;
 
 function logBoo(msg, ...args) {
@@ -54,6 +54,7 @@ function checkScriptsLoaded() {
 class FaceRater {
   constructor() {
     this.loaded = false;
+    this.model = null;
   }
   async loadModels() {
     if (this.loaded) return;
@@ -62,6 +63,7 @@ class FaceRater {
     await faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_BASE_URL);
     await faceapi.nets.faceExpressionNet.loadFromUri(MODEL_BASE_URL);
     await faceapi.nets.ageGenderNet.loadFromUri(MODEL_BASE_URL);
+    this.model = await tf.loadLayersModel("https://rebo-85.github.io/Model-Server/beauty-predict/model.json");
     this.loaded = true;
   }
   async rate(imgEl) {
@@ -87,7 +89,9 @@ class FaceRater {
           img.src = blobUrl;
         });
         testImg = img;
-      } catch {}
+      } catch (e) {
+        logBoo("Error", e);
+      }
     }
     try {
       const opts = new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.3 });
@@ -105,14 +109,67 @@ class FaceRater {
         const ageText = ageBadge.textContent.trim().match(/\d{2,3}/);
         if (ageText) domAge = parseInt(ageText[0], 10);
       }
+      // Run custom model
+      const faceBox = detection.detection.box;
+      const faceCanvas = document.createElement("canvas");
+      faceCanvas.width = faceBox.width;
+      faceCanvas.height = faceBox.height;
+      faceCanvas
+        .getContext("2d")
+        .drawImage(testImg, faceBox.x, faceBox.y, faceBox.width, faceBox.height, 0, 0, faceBox.width, faceBox.height);
+      let inputTensor = tf.browser.fromPixels(faceCanvas).toFloat();
+      inputTensor = tf.image.resizeBilinear(inputTensor, [224, 224]);
+      inputTensor = inputTensor.div(255.0).expandDims(0);
+
+      // debug tensor shape
+      if (
+        !inputTensor ||
+        !inputTensor.shape ||
+        inputTensor.shape.length !== 4 ||
+        inputTensor.shape[1] !== 224 ||
+        inputTensor.shape[2] !== 224
+      ) {
+        logBoo("Tensor shape invalid", inputTensor && inputTensor.shape);
+        inputTensor.dispose && inputTensor.dispose();
+        return null;
+      }
+
+      let modelScore = null;
+      if (this.model) {
+        try {
+          const prediction = this.model.predict(inputTensor);
+          const predArr = await prediction.data();
+          if (
+            Array.isArray(predArr) &&
+            predArr.length === 5 &&
+            predArr.every((v) => typeof v === "number" && !isNaN(v))
+          ) {
+            modelScore = predArr.reduce((sum, v, i) => sum + v * (6 + i), 0);
+          } else {
+            logBoo("Model output invalid", predArr);
+            modelScore = null;
+          }
+          inputTensor.dispose();
+          prediction.dispose && prediction.dispose();
+        } catch (err) {
+          logBoo("model.predict error", err, inputTensor && inputTensor.shape);
+          inputTensor.dispose && inputTensor.dispose();
+          return null;
+        }
+      }
       const expressions = detection.expressions || {};
       const mood = (expressions.happy || 0) + (expressions.neutral || 0);
       const confidence = detection.detection?.score || 0;
       const age = domAge || (detection.age ? Math.round(detection.age) : null);
       const gender = detection.gender || null;
-      const score = Math.round(Math.min(10, mood * 7 + confidence * 3) * 10) / 10;
+      const score =
+        modelScore !== null
+          ? Math.round(modelScore * 10) / 10
+          : Math.round(Math.min(10, mood * 7 + confidence * 3) * 10) / 10;
       return { score, mood, age, gender, confidence, box: detection.detection.box };
-    } catch {}
+    } catch (e) {
+      logBoo("Error", e);
+    }
   }
 }
 
@@ -335,8 +392,9 @@ async function startAutomatcher() {
     `;
     successBadge.textContent = "✅ Boo Automatcher Active";
     document.body.appendChild(successBadge);
-  } catch {
-    setStatus("❌ AI initialization failed");
+  } catch (err) {
+    setStatus("❌ AI init error");
+    logBoo("AI model load error", err);
     automatcherStarted = false;
   }
 }
