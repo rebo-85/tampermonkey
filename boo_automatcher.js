@@ -13,12 +13,10 @@
 // @connect      images.prod.boo.dating
 // @connect      rebo-85.github.io
 // @connect      boo.world
-// @run-at       document-end
 // ==/UserScript==
 
 (function () {
   "use strict";
-
   let model = null;
   let isInitialized = false;
   let isInitializing = false;
@@ -33,7 +31,6 @@
       showNotification(`Loading AI model...`);
       model = await tf.loadLayersModel("https://rebo-85.github.io/Model-Server/beauty_predict/model.json");
 
-      // Load face detection model
       await faceapi.nets.ssdMobilenetv1.loadFromUri("https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model/");
       faceModelLoaded = true;
 
@@ -141,7 +138,6 @@
   }
 
   function drawFaceBoxOverlay(img, box) {
-    // Remove previous overlay if any
     const existingBox = img.parentElement.querySelector(".face-box-overlay");
     if (existingBox) existingBox.remove();
 
@@ -174,11 +170,11 @@
     const normalized = resized.div(255.0).expandDims(0);
 
     const prediction = model.predict(normalized);
-    const result = await prediction.data();
+    const predictionArr = await prediction.data();
 
     tf.dispose([tensor, resized, normalized, prediction]);
 
-    return result[0];
+    return predictionArr[0];
   }
 
   function addBeautyScoreToImage(img, beautyScore) {
