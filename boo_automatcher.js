@@ -1,16 +1,19 @@
 // ==UserScript==
-// @name         Boo World Beauty Rating
+// @name         Boo World Beauty Rating (Face Detection + CORS-safe)
 // @namespace    http://tampermonkey.net/
-// @version      1.5
-// @description  Rate beauty scores for main profile pictures on Boo World
+// @version      1.7
+// @description  Rate beauty scores for main profile pictures on Boo World (with face detection + cropping)
 // @author       ReBo
-// @match        https://boo.world/match
-// @grant        none
+// @match        https://boo.world/match*
 // @require      https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.15.0/dist/tf.min.js
+// @require      https://cdn.jsdelivr.net/npm/@vladmandic/face-api/dist/face-api.min.js
 // @grant        GM_xmlhttpRequest
+// @grant        GM_getValue
+// @grant        GM_setValue
 // @connect      images.prod.boo.dating
 // @connect      rebo-85.github.io
 // @connect      boo.world
+// @run-at       document-end
 // ==/UserScript==
 
 (function () {
@@ -19,20 +22,25 @@
   let model = null;
   let isInitialized = false;
   let isInitializing = false;
+  let faceModelLoaded = false;
 
   async function initializeModels() {
     isInitializing = true;
     try {
       if (isInitialized) return;
-      console.log("[Boo Automatcher] Loading beauty model...");
+      console.log("[Boo Automatcher] Loading models...");
 
-      showNotification(`Loading AI model`);
+      showNotification(`Loading AI model...`);
       model = await tf.loadLayersModel("https://rebo-85.github.io/Model-Server/beauty_predict/model.json");
-      console.log("[Boo Automatcher] Beauty prediction model loaded successfully");
-      showNotification(`AI model Ready`, "success");
+
+      // Load face detection model
+      await faceapi.nets.ssdMobilenetv1.loadFromUri("https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model/");
+      faceModelLoaded = true;
+
+      console.log("[Boo Automatcher] Models loaded successfully.");
+      showNotification(`AI models ready`, "success");
 
       const profileImages = findProfileImages();
-
       let processedCount = 0;
       for (let img of profileImages) {
         if (await processSingleProfileImage(img)) processedCount++;
@@ -45,10 +53,10 @@
       isInitializing = false;
     }
   }
+
   function findProfileImages() {
     const profileColumns = document.querySelectorAll('div[id^="profileColumn-"]');
     const currentProfile = profileColumns[profileColumns.length - 1];
-
     const imgSelectors = [
       'img[class*="rounded-3xl"][class*="object-cover"]',
       'img[data-nimg="fill"]',
@@ -61,7 +69,6 @@
     ];
 
     let profileImages = [];
-
     for (const selector of imgSelectors) {
       if (!currentProfile) break;
       const images = currentProfile.querySelectorAll(selector);
@@ -78,26 +85,16 @@
       profileImages = Array.from(allImages).filter((img) => img.width > 150 && img.height > 150);
     }
 
-    if (profileImages.length === 0) {
-      const containers = document.querySelectorAll('[class*="card"], [class*="profile"], [class*="user"]');
-      for (const container of containers) {
-        const imgs = container.querySelectorAll("img");
-        const largeImgs = Array.from(imgs).filter((img) => img.width > 150 && img.height > 150);
-        profileImages.push(...largeImgs);
-      }
-    }
-
     const uniqueImages = [];
     const seenSrc = new Set();
-
     for (const img of profileImages) {
-      if (!img.hasAttribute("data-beauty-processed") && !seenSrc.has(img.src) && img.src) {
+      if (!img.hasAttribute("data-beauty-processed") && !seenSrc.has(img.src)) {
         uniqueImages.push(img);
         seenSrc.add(img.src);
       }
     }
 
-    console.log(`[Boo Automatcher] Found ${uniqueImages.length} images in the profile.`);
+    console.log(`[Boo Automatcher] Found ${uniqueImages.length} profile images.`);
     return uniqueImages;
   }
 
@@ -111,6 +108,7 @@
         });
         return false;
       }
+
       const beautyScore = await predictImageBeauty(img);
       addBeautyScoreToImage(img, beautyScore);
       img.setAttribute("data-beauty-processed", "true");
@@ -121,86 +119,115 @@
     }
   }
 
-  async function getCanvas(img) {
-    const blob = await gmFetchBlob(img.src);
-    if (!blob) throw new Error("Failed to get blob for image");
+  async function gmFetchBlob(url) {
+    return new Promise((resolve, reject) => {
+      GM_xmlhttpRequest({
+        method: "GET",
+        url,
+        responseType: "blob",
+        onload: (res) => {
+          if (res.status >= 200 && res.status < 300) resolve(res.response);
+          else reject(new Error(`Failed to fetch image: ${res.status}`));
+        },
+        onerror: reject,
+        ontimeout: reject,
+      });
+    });
+  }
 
+  async function loadImage(src) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = reject;
+      img.src = src;
+    });
+  }
+
+  async function getFaceCroppedCanvas(img) {
+    if (!faceModelLoaded) throw new Error("Face detection model not loaded");
+
+    const blob = await gmFetchBlob(img.src);
     const blobUrl = URL.createObjectURL(blob);
-    const decoded = await loadImage(blobUrl); // wait until the image is fully decoded
+    const decoded = await loadImage(blobUrl);
     URL.revokeObjectURL(blobUrl);
 
-    const canvas = document.createElement("canvas");
-    const ctx = canvas.getContext("2d", { willReadFrequently: true });
-    canvas.width = decoded.naturalWidth || decoded.width;
-    canvas.height = decoded.naturalHeight || decoded.height;
+    const detections = await faceapi.detectAllFaces(decoded);
+    if (!detections.length) throw new Error("No face detected");
 
-    ctx.drawImage(decoded, 0, 0);
+    const mainFace = detections.sort((a, b) => b.box.width * b.box.height - a.box.width * a.box.height)[0].box;
+
+    const padX = mainFace.width * 0.3;
+    const padY = mainFace.height * 0.3;
+    const cropX = Math.max(mainFace.x - padX / 2, 0);
+    const cropY = Math.max(mainFace.y - padY / 2, 0);
+    const cropW = Math.min(mainFace.width + padX, decoded.width - cropX);
+    const cropH = Math.min(mainFace.height + padY, decoded.height - cropY);
+
+    drawFaceBoxOverlay(img, {
+      x: cropX,
+      y: cropY,
+      width: cropW,
+      height: cropH,
+    });
+
+    const canvas = document.createElement("canvas");
+    canvas.width = cropW;
+    canvas.height = cropH;
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(decoded, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
+
     return canvas;
   }
 
-  function gmFetchBlob(url) {
-    return new Promise((resolve, reject) => {
-      GM_xmlhttpRequest({
-        method: "GET",
-        url,
-        responseType: "blob",
-        onload: (res) => resolve(res.response),
-        onerror: reject,
-        ontimeout: reject,
-      });
-    });
-  }
+  function drawFaceBoxOverlay(img, box) {
+    // Remove previous overlay if any
+    const existingBox = img.parentElement.querySelector(".face-box-overlay");
+    if (existingBox) existingBox.remove();
 
-  function gmFetchBlob(url) {
-    return new Promise((resolve, reject) => {
-      GM_xmlhttpRequest({
-        method: "GET",
-        url,
-        responseType: "blob",
-        onload: (res) => resolve(res.response),
-        onerror: reject,
-        ontimeout: reject,
-      });
-    });
-  }
+    const parent = img.parentElement;
+    if (window.getComputedStyle(parent).position === "static") parent.style.position = "relative";
 
-  function loadImage(src) {
-    return new Promise((resolve, reject) => {
-      const i = new Image();
-      i.onload = () => resolve(i);
-      i.onerror = (e) => reject(e);
-      i.src = src;
-    });
+    const overlay = document.createElement("div");
+    overlay.className = "face-box-overlay";
+    overlay.style.cssText = `
+      position: absolute;
+      left: ${img.offsetLeft + box.x * (img.width / img.naturalWidth)}px;
+      top: ${img.offsetTop + box.y * (img.height / img.naturalHeight)}px;
+      width: ${box.width * (img.width / img.naturalWidth)}px;
+      height: ${box.height * (img.height / img.naturalHeight)}px;
+      border: 2px solid #00ff88;
+      border-radius: 6px;
+      z-index: 10;
+      pointer-events: none;
+      box-shadow: 0 0 10px rgba(0,255,100,0.5);
+    `;
+    parent.appendChild(overlay);
   }
 
   async function predictImageBeauty(img) {
-    const canvas = await getCanvas(img);
-    if (!canvas) throw new Error("Canvas generation failed");
+    const canvas = await getFaceCroppedCanvas(img);
 
-    // Ensure valid pixel data
-    const ctx = canvas.getContext("2d");
-    const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    if (!imgData) throw new Error("No image data extracted");
+    const tensor = tf.browser.fromPixels(canvas).toFloat();
+    const resized = tf.image.resizeBilinear(tensor, [224, 224]);
+    const normalized = resized.div(255.0).expandDims(0);
 
-    let inputTensor = tf.browser.fromPixels(imgData).toFloat();
-    inputTensor = tf.image.resizeBilinear(inputTensor, [224, 224]);
-    inputTensor = inputTensor.div(255.0).expandDims(0);
+    const prediction = model.predict(normalized);
+    const result = await prediction.data();
 
-    const prediction = model.predict(inputTensor);
-    const predArr = await prediction.data();
-    const beautyScore = predArr[0];
-    tf.dispose([inputTensor, prediction]);
+    tf.dispose([tensor, resized, normalized, prediction]);
 
-    return beautyScore;
+    return result[0];
   }
+
   function addBeautyScoreToImage(img, beautyScore) {
     const parent = img.parentElement;
-    if (window.getComputedStyle(parent).position === "static") {
-      parent.style.position = "relative";
-    }
+    if (window.getComputedStyle(parent).position === "static") parent.style.position = "relative";
+
     const badge = document.createElement("div");
     badge.className = "beauty-score-badge";
     const formattedScore = (beautyScore * 100).toFixed(1);
+
     badge.style.cssText = `
       position: absolute;
       left: ${img.offsetLeft + 8}px;
@@ -218,22 +245,19 @@
       border: 2px solid white;
     `;
     badge.textContent = `🌟 ${formattedScore}/10`;
-    badge.title = `Beauty Score: ${formattedScore}/10`;
     parent.appendChild(badge);
-    if (!img.beautyBadges) img.beautyBadges = [];
-    img.beautyBadges.push(badge);
-    const originalBorder = img.style.border;
+
     img.style.border = `3px solid ${getScoreColor(formattedScore)}`;
     img.style.borderRadius = "16px";
-    img.setAttribute("data-original-border", originalBorder);
+    img.setAttribute("data-beauty-processed", "true");
   }
 
   function getScoreColor(score, alpha = 1) {
-    if (score >= 8.5) return `rgba(76, 175, 80, ${alpha})`; // Green
-    if (score >= 7.5) return `rgba(139, 195, 74, ${alpha})`; // Light Green
-    if (score >= 6.5) return `rgba(255, 193, 7, ${alpha})`; // Yellow
-    if (score >= 5.5) return `rgba(255, 152, 0, ${alpha})`; // Orange
-    return `rgba(244, 67, 54, ${alpha})`; // Red
+    if (score >= 8.5) return `rgba(76,175,80,${alpha})`;
+    if (score >= 7.5) return `rgba(139,195,74,${alpha})`;
+    if (score >= 6.5) return `rgba(255,193,7,${alpha})`;
+    if (score >= 5.5) return `rgba(255,152,0,${alpha})`;
+    return `rgba(244,67,54,${alpha})`;
   }
 
   function setupAutoObserver() {
@@ -243,32 +267,19 @@
       mutations.forEach((mutation) => {
         mutation.addedNodes.forEach((node) => {
           if (node.nodeType === 1) {
-            if (
-              node.querySelector &&
-              (node.querySelector('img[class*="rounded-3xl"][class*="object-cover"]') ||
-                node.querySelector('img[src*="images.prod.boo.dating"]'))
-            ) {
-              setTimeout(() => {
-                const newImages = findProfileImages().filter((img) => !img.hasAttribute("data-beauty-processed"));
-                if (newImages.length > 0) {
-                  newImages.forEach((img) => processSingleProfileImage(img));
-                }
-              }, 1000);
-            }
+            const imgs = node.querySelectorAll?.('img[src*="images.prod.boo.dating"]');
+            imgs.forEach((img) => processSingleProfileImage(img));
           }
         });
       });
     });
 
-    observer.observe(document.body, {
-      childList: true,
-      subtree: true,
-    });
+    observer.observe(document.body, { childList: true, subtree: true });
   }
 
   function showNotification(message, type = "info") {
-    const existingNotification = document.getElementById("beauty-notification");
-    if (existingNotification) existingNotification.remove();
+    const existing = document.getElementById("beauty-notification");
+    if (existing) existing.remove();
 
     const notification = document.createElement("div");
     notification.id = "beauty-notification";
@@ -290,16 +301,10 @@
     notification.textContent = message;
 
     document.body.appendChild(notification);
-
-    setTimeout(() => {
-      if (notification.parentNode) {
-        notification.parentNode.removeChild(notification);
-      }
-    }, 4000);
+    setTimeout(() => notification.remove(), 4000);
   }
 
-  // Initialize
-  window.addEventListener("load", function () {
+  window.addEventListener("load", () => {
     setupAutoObserver();
 
     const modelInitInterval = setInterval(() => {
