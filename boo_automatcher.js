@@ -99,6 +99,13 @@
   }
 
   async function processSingleProfileImage(img) {
+    if (
+      img.classList.contains("rounded-full") &&
+      img.classList.contains("object-cover") &&
+      img.src.endsWith("/lg.webp")
+    )
+      return false;
+
     try {
       if (img.hasAttribute("data-beauty-processed")) return false;
       if (!img.complete || img.naturalWidth === 0) {
@@ -153,12 +160,15 @@
     URL.revokeObjectURL(blobUrl);
 
     const detections = await faceapi.detectAllFaces(decoded);
-    if (!detections.length) throw new Error("No face detected");
+    if (!detections.length) {
+      console.log("[Boo Automatcher] No faces detected in image:", img.src);
+      return;
+    }
 
     const mainFace = detections.sort((a, b) => b.box.width * b.box.height - a.box.width * a.box.height)[0].box;
 
-    const padX = mainFace.width * 0.3;
-    const padY = mainFace.height * 0.3;
+    const padX = mainFace.width * 0.7;
+    const padY = mainFace.height * 0.7;
     const cropX = Math.max(mainFace.x - padX / 2, 0);
     const cropY = Math.max(mainFace.y - padY / 2, 0);
     const cropW = Math.min(mainFace.width + padX, decoded.width - cropX);
@@ -207,6 +217,7 @@
 
   async function predictImageBeauty(img) {
     const canvas = await getFaceCroppedCanvas(img);
+    if (!canvas) return 0;
 
     const tensor = tf.browser.fromPixels(canvas).toFloat();
     const resized = tf.image.resizeBilinear(tensor, [224, 224]);
@@ -227,12 +238,17 @@
     const badge = document.createElement("div");
     badge.className = "beauty-score-badge";
     const formattedScore = (beautyScore * 100).toFixed(1);
+    let badgeText;
+    const badgeColor = getScoreColor(formattedScore, 0.9);
+
+    if (beautyScore === 0) badgeText = "🚫 No face Detected";
+    else badgeText = `🌟 ${formattedScore}/10`;
 
     badge.style.cssText = `
       position: absolute;
       left: ${img.offsetLeft + 8}px;
       top: ${img.offsetTop + 8}px;
-      background: ${getScoreColor(formattedScore, 0.9)};
+      background: ${badgeColor};
       color: white;
       padding: 8px 12px;
       border-radius: 20px;
@@ -244,19 +260,21 @@
       pointer-events: none;
       border: 2px solid white;
     `;
-    badge.textContent = `🌟 ${formattedScore}/10`;
+    badge.textContent = badgeText;
     parent.appendChild(badge);
 
-    img.style.border = `3px solid ${getScoreColor(formattedScore)}`;
+    img.style.border = `3px solid ${badgeColor}`;
     img.style.borderRadius = "16px";
     img.setAttribute("data-beauty-processed", "true");
   }
 
   function getScoreColor(score, alpha = 1) {
+    if (typeof score === "string") score = parseFloat(score);
     if (score >= 8.5) return `rgba(76,175,80,${alpha})`;
     if (score >= 7.5) return `rgba(139,195,74,${alpha})`;
     if (score >= 6.5) return `rgba(255,193,7,${alpha})`;
     if (score >= 5.5) return `rgba(255,152,0,${alpha})`;
+    if (score == 0) return `rgba(180,180,180,${alpha})`;
     return `rgba(244,67,54,${alpha})`;
   }
 
