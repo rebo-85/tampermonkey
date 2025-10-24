@@ -7,6 +7,7 @@
 // @match        https://boo.world/match
 // @grant        none
 // @require      https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.15.0/dist/tf.min.js
+// @require      https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js
 // @connect      rebo-85.github.io
 // @connect      boo.world
 // @connect      images.prod.boo.dating
@@ -100,6 +101,15 @@
     return uniqueImages;
   }
 
+  async function ensureFaceDetected(img) {
+    await faceapi.nets.ssdMobilenetv1.loadFromUri("https://rebo-85.github.io/Model-Server/face-api.js/weights");
+    await faceapi.nets.faceLandmark68Net.loadFromUri("https://rebo-85.github.io/Model-Server/face-api.js/weights");
+    await faceapi.nets.faceRecognitionNet.loadFromUri("https://rebo-85.github.io/Model-Server/face-api.js/weights");
+    const canvas = await getCanvas(img);
+    const detection = await faceapi.detectSingleFace(canvas);
+    return !!detection;
+  }
+
   async function processSingleProfileImage(img) {
     try {
       if (img.hasAttribute("data-beauty-processed")) return false;
@@ -108,6 +118,11 @@
           img.removeEventListener("load", onImgLoad);
           if (!img.hasAttribute("data-beauty-processed")) await processSingleProfileImage(img);
         });
+        return false;
+      }
+      const faceFound = await ensureFaceDetected(img);
+      if (!faceFound) {
+        img.setAttribute("data-beauty-processed", "true");
         return false;
       }
       const beautyScore = await predictImageBeauty(img);
