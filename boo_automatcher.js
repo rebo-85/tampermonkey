@@ -20,16 +20,13 @@
   let isInitialized = false;
   let isInitializing = false;
 
-  // Initialize models
   async function initializeModels() {
     isInitializing = true;
     try {
       if (isInitialized) return;
-
       console.log("[Boo Automatcher] Loading beauty model...");
 
       showNotification(`Loading AI model`);
-      // Load beauty prediction model
       model = await tf.loadLayersModel("https://rebo-85.github.io/Model-Server/beauty_predict/model.json");
       console.log("[Boo Automatcher] Beauty prediction model loaded successfully");
       showNotification(`AI model Ready`, "success");
@@ -42,43 +39,6 @@
       isInitializing = false;
     }
   }
-
-  // Show notification
-  function showNotification(message, type = "info") {
-    const existingNotification = document.getElementById("beauty-notification");
-    if (existingNotification) {
-      existingNotification.remove();
-    }
-
-    const notification = document.createElement("div");
-    notification.id = "beauty-notification";
-    notification.style.cssText = `
-      position: fixed;
-      top: 80px;
-      right: 20px;
-      background: ${type === "success" ? "#4CAF50" : type === "error" ? "#f44336" : "#2196F3"};
-      color: white;
-      padding: 12px 20px;
-      border-radius: 5px;
-      z-index: 10001;
-      box-shadow: 0 4px 15px rgba(0,0,0,0.2);
-      font-family: Arial, sans-serif;
-      font-size: 14px;
-      max-width: 300px;
-      word-wrap: break-word;
-    `;
-    notification.textContent = message;
-
-    document.body.appendChild(notification);
-
-    setTimeout(() => {
-      if (notification.parentNode) {
-        notification.parentNode.removeChild(notification);
-      }
-    }, 4000);
-  }
-
-  // Find main profile images specifically
   function findProfileImages() {
     const profileColumns = document.querySelectorAll('div[id^="profileColumn-"]');
     const currentProfile = profileColumns[profileColumns.length - 1];
@@ -273,16 +233,14 @@
     img.setAttribute("data-original-border", originalBorder);
   }
 
-  // Get color based on beauty score
   function getScoreColor(score, alpha = 1) {
-    if (score >= 8.5) return `rgba(76, 175, 80, ${alpha})`; // Green - Excellent
-    if (score >= 7.5) return `rgba(139, 195, 74, ${alpha})`; // Light Green - Very Good
-    if (score >= 6.5) return `rgba(255, 193, 7, ${alpha})`; // Yellow - Good
-    if (score >= 5.5) return `rgba(255, 152, 0, ${alpha})`; // Orange - Average
-    return `rgba(244, 67, 54, ${alpha})`; // Red - Below Average
+    if (score >= 8.5) return `rgba(76, 175, 80, ${alpha})`; // Green
+    if (score >= 7.5) return `rgba(139, 195, 74, ${alpha})`; // Light Green
+    if (score >= 6.5) return `rgba(255, 193, 7, ${alpha})`; // Yellow
+    if (score >= 5.5) return `rgba(255, 152, 0, ${alpha})`; // Orange
+    return `rgba(244, 67, 54, ${alpha})`; // Red
   }
 
-  // Auto-rate new profiles when they appear (for infinite scroll)
   function setupAutoObserver() {
     const observer = new MutationObserver((mutations) => {
       if (!model || isProcessing) return;
@@ -314,6 +272,40 @@
       childList: true,
       subtree: true,
     });
+  }
+
+  function showNotification(message, type = "info") {
+    const existingNotification = document.getElementById("beauty-notification");
+    if (existingNotification) {
+      existingNotification.remove();
+    }
+
+    const notification = document.createElement("div");
+    notification.id = "beauty-notification";
+    notification.style.cssText = `
+      position: fixed;
+      top: 80px;
+      right: 20px;
+      background: ${type === "success" ? "#4CAF50" : type === "error" ? "#f44336" : "#2196F3"};
+      color: white;
+      padding: 12px 20px;
+      border-radius: 5px;
+      z-index: 10001;
+      box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+      font-family: Arial, sans-serif;
+      font-size: 14px;
+      max-width: 300px;
+      word-wrap: break-word;
+    `;
+    notification.textContent = message;
+
+    document.body.appendChild(notification);
+
+    setTimeout(() => {
+      if (notification.parentNode) {
+        notification.parentNode.removeChild(notification);
+      }
+    }, 4000);
   }
 
   // Initialize when page loads
