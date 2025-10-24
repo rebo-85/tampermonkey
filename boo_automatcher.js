@@ -324,7 +324,9 @@
     const modelInitInterval = setInterval(() => {
       if (!isInitialized) {
         if (!isInitializing) initializeModels();
-      } else clearInterval(modelInitInterval);
+      } else {
+        clearInterval(modelInitInterval);
+      }
     }, 1000);
   });
 })();
