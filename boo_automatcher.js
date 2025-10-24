@@ -7,6 +7,7 @@
 // @match        https://boo.world/match
 // @grant        none
 // @require      https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.15.0/dist/tf.min.js
+// @require      https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js
 // @connect      rebo-85.github.io
 // @connect      boo.world
 // @connect      images.prod.boo.dating
@@ -16,7 +17,6 @@
   "use strict";
 
   let model = null;
-  let isProcessing = false;
   let isInitialized = false;
   let isInitializing = false;
 
@@ -31,8 +31,14 @@
       console.log("[Boo Automatcher] Beauty prediction model loaded successfully");
       showNotification(`AI model Ready`, "success");
 
+      const profileImages = findProfileImages();
+
+      let processedCount = 0;
+      for (let img of profileImages) {
+        if (await processSingleProfileImage(img)) processedCount++;
+      }
+
       isInitialized = true;
-      scanProfileImages();
     } catch (error) {
       console.error("[Boo Automatcher] Error loading model:", error);
       showNotification(`Failed to load model: ${error.message}`, "error");
@@ -60,7 +66,6 @@
       if (!currentProfile) break;
       const images = currentProfile.querySelectorAll(selector);
       if (images.length > 0) {
-        console.log(`[Boo Automatcher] Found ${images.length} images with selector: ${selector}`);
         profileImages = Array.from(images).filter(
           (img) => img.width > 150 && img.height > 150 && img.src && img.src.includes("images.prod.boo.dating")
         );
@@ -92,45 +97,22 @@
       }
     }
 
-    console.log(`[Boo Automatcher] Found ${uniqueImages.length} unique profile images to process`);
+    console.log(`[Boo Automatcher] Found ${uniqueImages.length} images in the profile.`);
     return uniqueImages;
   }
 
-  // Scan only profile images
-  async function scanProfileImages() {
-    isProcessing = true;
-
-    try {
-      const profileImages = findProfileImages();
-
-      if (profileImages.length === 0) {
-        showNotification("No profile images found on this page.", "warning");
-        return;
-      }
-
-      let processedCount = 0;
-      d;
-      for (let img of profileImages) {
-        if (await processSingleProfileImage(img)) {
-          processedCount++;
-        }
-        await new Promise((resolve) => setTimeout(resolve, 200)); // Slow down to avoid rate limiting
-      }
-
-      showNotification(`Rated ${processedCount} profile images`, "success");
-    } catch (error) {
-      console.error("[Boo Automatcher] Error during scanning:", error);
-      showNotification(`Rating error: ${error.message}`, "error");
-    } finally {
-      isProcessing = false;
-    }
+  async function ensureFaceDetected(img) {
+    await faceapi.nets.ssdMobilenetv1.loadFromUri("https://rebo-85.github.io/Model-Server/face-api.js/weights");
+    await faceapi.nets.faceLandmark68Net.loadFromUri("https://rebo-85.github.io/Model-Server/face-api.js/weights");
+    await faceapi.nets.faceRecognitionNet.loadFromUri("https://rebo-85.github.io/Model-Server/face-api.js/weights");
+    const canvas = await getCanvas(img);
+    const detection = await faceapi.detectSingleFace(canvas);
+    return !!detection;
   }
 
-  // Process a single profile image
   async function processSingleProfileImage(img) {
     try {
       if (img.hasAttribute("data-beauty-processed")) return false;
-
       if (!img.complete || img.naturalWidth === 0) {
         img.addEventListener("load", async function onImgLoad() {
           img.removeEventListener("load", onImgLoad);
@@ -138,15 +120,13 @@
         });
         return false;
       }
-
-      console.log("[Boo Automatcher] Processing profile image:", img.src);
-
-      // Use the entire image for beauty prediction (assuming it's a face)
+      const faceFound = await ensureFaceDetected(img);
+      if (!faceFound) {
+        img.setAttribute("data-beauty-processed", "true");
+        return false;
+      }
       const beautyScore = await predictImageBeauty(img);
-
-      // Add beauty score overlay
       addBeautyScoreToImage(img, beautyScore);
-
       img.setAttribute("data-beauty-processed", "true");
       return true;
     } catch (error) {
@@ -155,38 +135,38 @@
     }
   }
 
-  // Predict beauty score for entire image
-  async function predictImageBeauty(img) {
+  async function getCanvas(img) {
     const canvas = document.createElement("canvas");
     const ctx = canvas.getContext("2d");
     canvas.width = img.naturalWidth || img.width;
     canvas.height = img.naturalHeight || img.height;
 
-    let drawWorked = false;
-
-    if (!drawWorked) {
-      try {
-        const proxyEndpoint = "http://localhost:3000/request";
-        const proxyResp = await fetch(proxyEndpoint, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            url: img.src,
-            method: "GET",
-          }),
-        });
-        const proxiedBlob = await proxyResp.blob();
-        const proxiedBlobUrl = URL.createObjectURL(proxiedBlob);
-        const tempImg = document.createElement("img");
-        tempImg.src = proxiedBlobUrl;
-        await new Promise((r) => (tempImg.onload = r));
-        ctx.drawImage(tempImg, 0, 0, canvas.width, canvas.height);
-        URL.revokeObjectURL(proxiedBlobUrl);
-      } catch (proxyErr) {
-        console.error("[Boo Automatcher] Proxy image fetch failed:", proxyErr, img.src);
-        return 0;
-      }
+    try {
+      const proxyEndpoint = "http://localhost:3000/request";
+      const proxyResp = await fetch(proxyEndpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          url: img.src,
+          method: "GET",
+        }),
+      });
+      const proxiedBlob = await proxyResp.blob();
+      const proxiedBlobUrl = URL.createObjectURL(proxiedBlob);
+      const tempImg = document.createElement("img");
+      tempImg.src = proxiedBlobUrl;
+      await new Promise((r) => (tempImg.onload = r));
+      ctx.drawImage(tempImg, 0, 0, canvas.width, canvas.height);
+      URL.revokeObjectURL(proxiedBlobUrl);
+      return canvas;
+    } catch (proxyErr) {
+      console.error("[Boo Automatcher] Proxy image fetch failed:", proxyErr, img.src);
+      return null;
     }
+  }
+
+  async function predictImageBeauty(img) {
+    const canvas = await getCanvas(img);
 
     let inputTensor = tf.browser.fromPixels(canvas).toFloat();
     inputTensor = tf.image.resizeBilinear(inputTensor, [224, 224]);
@@ -197,7 +177,6 @@
     tf.dispose([inputTensor, prediction]);
     return beautyScore;
   }
-  // Add beauty score to image
   function addBeautyScoreToImage(img, beautyScore) {
     const parent = img.parentElement;
     if (window.getComputedStyle(parent).position === "static") {
@@ -243,13 +222,11 @@
 
   function setupAutoObserver() {
     const observer = new MutationObserver((mutations) => {
-      if (!model || isProcessing) return;
+      if (!model) return;
 
       mutations.forEach((mutation) => {
         mutation.addedNodes.forEach((node) => {
           if (node.nodeType === 1) {
-            // Element node
-            // Check if this looks like a new profile card
             if (
               node.querySelector &&
               (node.querySelector('img[class*="rounded-3xl"][class*="object-cover"]') ||
@@ -258,7 +235,6 @@
               setTimeout(() => {
                 const newImages = findProfileImages().filter((img) => !img.hasAttribute("data-beauty-processed"));
                 if (newImages.length > 0) {
-                  console.log("[Boo Automatcher] Auto-rating new profile images");
                   newImages.forEach((img) => processSingleProfileImage(img));
                 }
               }, 1000);
@@ -276,9 +252,7 @@
 
   function showNotification(message, type = "info") {
     const existingNotification = document.getElementById("beauty-notification");
-    if (existingNotification) {
-      existingNotification.remove();
-    }
+    if (existingNotification) existingNotification.remove();
 
     const notification = document.createElement("div");
     notification.id = "beauty-notification";
@@ -308,16 +282,14 @@
     }, 4000);
   }
 
-  // Initialize when page loads
+  // Initialize
   window.addEventListener("load", function () {
     setupAutoObserver();
 
     const modelInitInterval = setInterval(() => {
       if (!isInitialized) {
         if (!isInitializing) initializeModels();
-      } else {
-        clearInterval(modelInitInterval);
-      }
+      } else clearInterval(modelInitInterval);
     }, 1000);
   });
 })();
