@@ -40,62 +40,12 @@
       console.log("[Boo Automatcher] Models loaded successfully.");
       showNotification(`AI models ready`, "success");
 
-      const profileImages = findProfileImages();
-      let processedCount = 0;
-      for (let img of profileImages) {
-        if (await processSingleProfileImage(img)) processedCount++;
-      }
-
       isInitialized = true;
     } catch (error) {
       console.error("[Boo Automatcher] Error loading model:", error);
       showNotification(`Failed to load model: ${error.message}`, "error");
       isInitializing = false;
     }
-  }
-
-  function findProfileImages() {
-    const profileColumns = document.querySelectorAll('div[id^="profileColumn-"]');
-    const currentProfile = profileColumns[profileColumns.length - 1];
-    const imgSelectors = [
-      'img[class*="rounded-3xl"][class*="object-cover"]',
-      'img[data-nimg="fill"]',
-      '[class*="profile"] img',
-      '[class*="avatar"] img',
-      '[class*="user"] img',
-      ".main-photo img",
-      ".profile-picture img",
-      ".avatar img",
-    ];
-
-    let profileImages = [];
-    for (const selector of imgSelectors) {
-      if (!currentProfile) break;
-      const images = currentProfile.querySelectorAll(selector);
-      if (images.length > 0) {
-        profileImages = Array.from(images).filter(
-          (img) => img.width > 150 && img.height > 150 && img.src && img.src.includes("images.prod.boo.dating")
-        );
-        if (profileImages.length > 0) break;
-      }
-    }
-
-    if (profileImages.length === 0) {
-      const allImages = document.querySelectorAll('img[src*="images.prod.boo.dating"]');
-      profileImages = Array.from(allImages).filter((img) => img.width > 150 && img.height > 150);
-    }
-
-    const uniqueImages = [];
-    const seenSrc = new Set();
-    for (const img of profileImages) {
-      if (!img.hasAttribute("data-beauty-processed") && !seenSrc.has(img.src)) {
-        uniqueImages.push(img);
-        seenSrc.add(img.src);
-      }
-    }
-
-    console.log(`[Boo Automatcher] Found ${uniqueImages.length} profile images.`);
-    return uniqueImages;
   }
 
   async function processSingleProfileImage(img) {
@@ -279,19 +229,15 @@
   }
 
   function setupAutoObserver() {
-    const observer = new MutationObserver((mutations) => {
-      if (!model) return;
-
-      mutations.forEach((mutation) => {
-        mutation.addedNodes.forEach((node) => {
-          if (node.nodeType === 1) {
-            const imgs = node.querySelectorAll?.('img[src*="images.prod.boo.dating"]');
-            imgs.forEach((img) => processSingleProfileImage(img));
-          }
-        });
-      });
+    let lastProfile = null;
+    const observer = new MutationObserver(() => {
+      const profileColumns = document.querySelectorAll('div[id^="profileColumn-"]');
+      const currentProfile = profileColumns[profileColumns.length - 1];
+      if (!currentProfile || currentProfile === lastProfile) return;
+      lastProfile = currentProfile;
+      const imgs = currentProfile.querySelectorAll('img[src*="images.prod.boo.dating"]');
+      imgs.forEach((img) => processSingleProfileImage(img));
     });
-
     observer.observe(document.body, { childList: true, subtree: true });
   }
 
