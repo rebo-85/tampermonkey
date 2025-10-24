@@ -7,9 +7,10 @@
 // @match        https://boo.world/match
 // @grant        none
 // @require      https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.15.0/dist/tf.min.js
+// @grant        GM_xmlhttpRequest
+// @connect      images.prod.boo.dating
 // @connect      rebo-85.github.io
 // @connect      boo.world
-// @connect      images.prod.boo.dating
 // ==/UserScript==
 
 (function () {
@@ -121,45 +122,75 @@
   }
 
   async function getCanvas(img) {
-    const canvas = document.createElement("canvas");
-    const ctx = canvas.getContext("2d");
-    canvas.width = img.naturalWidth || img.width;
-    canvas.height = img.naturalHeight || img.height;
+    const blob = await gmFetchBlob(img.src);
+    if (!blob) throw new Error("Failed to get blob for image");
 
-    try {
-      const proxyEndpoint = "http://localhost:3000/request";
-      const proxyResp = await fetch(proxyEndpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          url: img.src,
-          method: "GET",
-        }),
+    const blobUrl = URL.createObjectURL(blob);
+    const decoded = await loadImage(blobUrl); // wait until the image is fully decoded
+    URL.revokeObjectURL(blobUrl);
+
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    canvas.width = decoded.naturalWidth || decoded.width;
+    canvas.height = decoded.naturalHeight || decoded.height;
+
+    ctx.drawImage(decoded, 0, 0);
+    return canvas;
+  }
+
+  function gmFetchBlob(url) {
+    return new Promise((resolve, reject) => {
+      GM_xmlhttpRequest({
+        method: "GET",
+        url,
+        responseType: "blob",
+        onload: (res) => resolve(res.response),
+        onerror: reject,
+        ontimeout: reject,
       });
-      const proxiedBlob = await proxyResp.blob();
-      const proxiedBlobUrl = URL.createObjectURL(proxiedBlob);
-      const tempImg = document.createElement("img");
-      tempImg.src = proxiedBlobUrl;
-      await new Promise((r) => (tempImg.onload = r));
-      ctx.drawImage(tempImg, 0, 0, canvas.width, canvas.height);
-      URL.revokeObjectURL(proxiedBlobUrl);
-      return canvas;
-    } catch (proxyErr) {
-      console.error("[Boo Automatcher] Proxy image fetch failed:", proxyErr, img.src);
-      return null;
-    }
+    });
+  }
+
+  function gmFetchBlob(url) {
+    return new Promise((resolve, reject) => {
+      GM_xmlhttpRequest({
+        method: "GET",
+        url,
+        responseType: "blob",
+        onload: (res) => resolve(res.response),
+        onerror: reject,
+        ontimeout: reject,
+      });
+    });
+  }
+
+  function loadImage(src) {
+    return new Promise((resolve, reject) => {
+      const i = new Image();
+      i.onload = () => resolve(i);
+      i.onerror = (e) => reject(e);
+      i.src = src;
+    });
   }
 
   async function predictImageBeauty(img) {
     const canvas = await getCanvas(img);
+    if (!canvas) throw new Error("Canvas generation failed");
 
-    let inputTensor = tf.browser.fromPixels(canvas).toFloat();
+    // Ensure valid pixel data
+    const ctx = canvas.getContext("2d");
+    const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    if (!imgData) throw new Error("No image data extracted");
+
+    let inputTensor = tf.browser.fromPixels(imgData).toFloat();
     inputTensor = tf.image.resizeBilinear(inputTensor, [224, 224]);
     inputTensor = inputTensor.div(255.0).expandDims(0);
+
     const prediction = model.predict(inputTensor);
     const predArr = await prediction.data();
     const beautyScore = predArr[0];
     tf.dispose([inputTensor, prediction]);
+
     return beautyScore;
   }
   function addBeautyScoreToImage(img, beautyScore) {
