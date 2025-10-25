@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Beauty Rating Model Playground</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      text-align: center;
+      background: #111;
+      color: #eee;
+    }
+    .container {
+      margin-top: 40px;
+    }
+    img {
+      max-width: 300px;
+      border-radius: 10px;
+      margin: 20px;
+      box-shadow: 0 0 10px #0008;
+    }
+    input[type="file"] {
+      margin-top: 20px;
+    }
+    #score {
+      font-size: 1.4em;
+      margin-top: 20px;
+    }
+    #pasteHint {
+      color: #aaa;
+      font-size: 0.9em;
+      margin-top: 8px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Beauty Rating (Face++)</h1>
+    <input type="file" id="imgInput" accept="image/*">
+    <div id="pasteHint">(or paste an image with Ctrl+V)</div>
+    <div><img id="preview" /></div>
+    <div id="score">Score: --</div>
+  </div>
+
+  <script>
+    const FACEPP_KEY = '9V5cLel47MH50sKqqQUGt0HvEUw2ifx_';
+    const FACEPP_SECRET = 'M48__E1_-d2SEUoGdQ8pgLlAB6zl9ZHx';
+    const FACEPP_URL = 'https://api-us.faceplusplus.com/facepp/v3/detect';
+
+    async function getBeautyScore(imageBlob) {
+  const form = new FormData()
+  form.append('api_key', FACEPP_KEY)
+  form.append('api_secret', FACEPP_SECRET)
+  form.append('image_file', imageBlob)
+  form.append('return_attributes', 'beauty,gender')
+  const resp = await fetch(FACEPP_URL, { method: 'POST', body: form })
+  if (!resp.ok) return null
+  const json = await resp.json()
+  if (!json.faces || !json.faces[0] || !json.faces[0].attributes) return null
+  const { gender, beauty } = json.faces[0].attributes
+  if (!gender || !beauty) return null
+  if (gender.value === 'Female') return beauty.female_score
+  if (gender.value === 'Male') return beauty.male_score
+  return null
+}
+
+function showScore(scoreVal) {
+  let txt = 'Score: --'
+  if (typeof scoreVal === 'number' && !isNaN(scoreVal)) txt = `Score: ${scoreVal.toFixed(1)}`
+  document.getElementById('score').innerText = txt
+}
+
+    function handleImage(file) {
+      const img = document.getElementById('preview');
+      img.src = URL.createObjectURL(file);
+      showScore('--');
+      img.onload = async () => {
+        showScore('--');
+        const score = await getBeautyScore(file);
+        showScore(score);
+      };
+    }
+
+    document.getElementById('imgInput').addEventListener('change', e => {
+      const file = e.target.files[0];
+      if (file) handleImage(file);
+    });
+
+    window.addEventListener('paste', e => {
+      const items = e.clipboardData.items;
+      for (const item of items) {
+        if (item.type.startsWith('image/')) {
+          const file = item.getAsFile();
+          if (file) handleImage(file);
+          break;
+        }
+      }
+    });
+  </script>
+</body>
+</html>
