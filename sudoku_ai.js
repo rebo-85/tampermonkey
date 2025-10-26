@@ -56,6 +56,39 @@ window.addEventListener("load", function () {
     return board;
   }
 
+  // Sudoku solver (minimal, adapted)
+  function solveSudokuBoard(grid) {
+    let board = grid.flat();
+    function isValid(idx, val) {
+      let row = Math.floor(idx / 9),
+        col = idx % 9;
+      for (let i = 0; i < 9; i++) {
+        if (board[row * 9 + i] === val) return false;
+        if (board[i * 9 + col] === val) return false;
+        let boxRow = 3 * Math.floor(row / 3) + Math.floor(i / 3);
+        let boxCol = 3 * Math.floor(col / 3) + (i % 3);
+        if (board[boxRow * 9 + boxCol] === val) return false;
+      }
+      return true;
+    }
+    function backtrack(idx) {
+      if (idx === 81) return true;
+      if (board[idx] !== 0) return backtrack(idx + 1);
+      for (let n = 1; n <= 9; n++) {
+        if (isValid(idx, n)) {
+          board[idx] = n;
+          if (backtrack(idx + 1)) return true;
+          board[idx] = 0;
+        }
+      }
+      return false;
+    }
+    backtrack(0);
+    let solved = [];
+    for (let i = 0; i < 9; i++) solved.push(board.slice(i * 9, i * 9 + 9));
+    return solved;
+  }
+
   // Create main button
   let btn = document.createElement("button");
   btn.textContent = "📷 OCR Sudoku";
@@ -145,16 +178,13 @@ window.addEventListener("load", function () {
     try {
       let cellCanvases = extractCellCanvases(boardCanvas);
       let sudokuBoard = await recognizeSudokuBoard(cellCanvases);
+      let solved = solveSudokuBoard(sudokuBoard);
 
       // Hide status
       statusPanel.style.display = "none";
 
-      // Copy to clipboard automatically
-      const boardString = JSON.stringify(sudokuBoard);
-      await navigator.clipboard.writeText(boardString);
-
-      console.log("Sudoku OCR board:", sudokuBoard);
-      showNotification("✅ Board copied to clipboard!", "success");
+      console.log("Sudoku solved board:", solved);
+      showNotification("✅ Sudoku solved!", "success");
     } catch (error) {
       statusPanel.style.display = "none";
       showNotification("❌ OCR failed! Try again.", "error");
