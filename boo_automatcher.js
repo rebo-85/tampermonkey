@@ -149,6 +149,9 @@
     URL.revokeObjectURL(blobUrl);
 
     const detections = await faceapi.detectAllFaces(decoded);
+    const minConfidence = 0.4;
+    const filtered = detections.filter((d) => d.score >= minConfidence);
+    if (!filtered.length) return null;
     if (!detections.length) {
       console.log("[Boo Automatcher] No faces detected:", img.src);
       return null;
