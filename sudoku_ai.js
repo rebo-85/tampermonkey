@@ -29,15 +29,6 @@ window.addEventListener("load", function () {
     });
   }
 
-  //   let fontStyle = document.createElement("style");
-  //   fontStyle.innerHTML = `
-  //   body, * {
-  //     font-family: 'Sitka Text', Arial, sans-serif !important;
-  //   }
-  // `;
-  document.head.appendChild(fontStyle);
-  document.head.appendChild(fontStyle);
-
   function extractVGGCells(canvas) {
     let ctx = canvas.getContext("2d");
     let w = canvas.width,
