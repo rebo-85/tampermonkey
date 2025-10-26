@@ -308,6 +308,36 @@
     setTimeout(() => notification.remove(), 4000);
   }
 
+  // function getProfileAverageScore(profileNode) {
+  //   const imgs = profileNode.querySelectorAll("img[data-beauty-processed]");
+  //   let sum = 0,
+  //     count = 0;
+  //   imgs.forEach((img) => {
+  //     const badge = img.parentElement.querySelector(".beauty-score-badge");
+  //     if (!badge) return;
+  //     const match = badge.textContent.match(/([0-9.]+)\/5/);
+  //     if (!match) return;
+  //     sum += parseFloat(match[1]);
+  //     count++;
+  //   });
+  //   if (!count) return 0;
+  //   return sum / count;
+  // }
+
+  // const avgBtn = document.createElement("button");
+  // avgBtn.textContent = "Get Avg Score";
+  // avgBtn.style.cssText =
+  //   "position:fixed;top:140px;right:20px;z-index:10002;padding:8px 16px;font-size:15px;background:#333;color:#fff;border:none;border-radius:6px;cursor:pointer";
+  // avgBtn.onclick = () => {
+  //   const profiles = document.querySelectorAll('div[id^="profileColumn-"]');
+
+  //   const currentProfile = profiles[profiles.length - 1];
+  //   if (!currentProfile) return alert("No profile found");
+  //   const avg = getProfileAverageScore(currentProfile);
+  //   alert("Average score: " + avg.toFixed(2));
+  // };
+  // document.body.appendChild(avgBtn);
+
   function setupAutoObserver() {
     if (observer) observer.disconnect();
     let lastProfile = null;
