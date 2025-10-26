@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         Boo World Beauty Rating (Face Detection + CORS-safe)
 // @namespace    http://tampermonkey.net/
-// @version      1.8
+// @version      1.8.1
 // @description  Rate beauty scores for main profile pictures on Boo World (with face detection + cropping)
 // @author       ReBo
-// @match        https://boo.world/match*
+// @match        https://boo.world/*
 // @require      https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.15.0/dist/tf.min.js
 // @require      https://cdn.jsdelivr.net/npm/@vladmandic/face-api/dist/face-api.min.js
 // @grant        GM_xmlhttpRequest
@@ -18,17 +18,46 @@
 (function () {
   "use strict";
 
-  // ───────────────────────────────────────────────────────────────
-  // Globals
-  // ───────────────────────────────────────────────────────────────
   let model = null;
   let isInitialized = false;
   let isInitializing = false;
   let faceModelLoaded = false;
+  let observer = null;
+  let active = false;
 
-  // ───────────────────────────────────────────────────────────────
-  // Initialization
-  // ───────────────────────────────────────────────────────────────
+  function activateAutomatcher() {
+    if (active) return;
+    active = true;
+    setupAutoObserver();
+  }
+
+  function deactivateAutomatcher() {
+    if (!active) return;
+    active = false;
+    if (observer) observer.disconnect();
+    document.querySelectorAll(".beauty-score-badge,.face-box-overlay").forEach((el) => el.remove());
+    document.querySelectorAll("img[data-beauty-processed]").forEach((img) => {
+      img.style.border = "";
+      img.style.borderRadius = "";
+      img.removeAttribute("data-beauty-processed");
+    });
+  }
+
+  function onLoad() {
+    const interval = setInterval(() => {
+      if (!isInitialized) initializeModels();
+      else clearInterval(interval);
+    }, 1000);
+
+    let lastMatch = false;
+    setInterval(() => {
+      const isMatchPage = /^https:\/\/boo\.world\/match/.test(location.href);
+      if (isMatchPage && !lastMatch) activateAutomatcher();
+      if (!isMatchPage && lastMatch) deactivateAutomatcher();
+      lastMatch = isMatchPage;
+    }, 500);
+  }
+
   async function initializeModels() {
     if (isInitialized || isInitializing) return;
     isInitializing = true;
@@ -37,7 +66,7 @@
       console.log("[Boo Automatcher] Loading models...");
       showNotification("Loading AI model...");
 
-      model = await tf.loadLayersModel("https://rebo-85.github.io/Model-Server/beauty_predict/model.json");
+      model = await tf.loadGraphModel("https://rebo-85.github.io/Model-Server/aesthetic_rater/model.json");
 
       await faceapi.nets.ssdMobilenetv1.loadFromUri("https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model/");
 
@@ -52,9 +81,6 @@
     }
   }
 
-  // ───────────────────────────────────────────────────────────────
-  // Image Processing
-  // ───────────────────────────────────────────────────────────────
   async function processSingleProfileImage(img) {
     if (shouldSkipImage(img)) return false;
 
@@ -89,9 +115,6 @@
     });
   }
 
-  // ───────────────────────────────────────────────────────────────
-  // Face Detection + Cropping
-  // ───────────────────────────────────────────────────────────────
   async function gmFetchBlob(url) {
     return new Promise((resolve, reject) => {
       GM_xmlhttpRequest({
@@ -189,26 +212,29 @@
     parent.appendChild(overlay);
   }
 
-  // ───────────────────────────────────────────────────────────────
-  // Prediction
-  // ───────────────────────────────────────────────────────────────
   async function predictImageBeauty(img) {
     const canvas = await getFaceCroppedCanvas(img);
     if (!canvas) return 0;
 
-    const tensor = tf.browser.fromPixels(canvas).toFloat();
-    const resized = tf.image.resizeBilinear(tensor, [224, 224]);
-    const normalized = resized.div(255.0).expandDims(0);
-    const prediction = model.predict(normalized);
-    const [score] = await prediction.data();
+    let tensor = tf.browser.fromPixels(canvas).toFloat();
+    tensor = tensor.div(127.5).sub(1);
+    tensor = tf.image.resizeBilinear(tensor, [224, 224]);
+    tensor = tensor.transpose([2, 0, 1]).expandDims(0);
 
-    tf.dispose([tensor, resized, normalized, prediction]);
+    const prediction = model.predict(tensor);
+    const logits = await prediction.data();
+    const maxLogit = Math.max(...logits);
+    const exps = logits.map((v) => Math.exp(v - maxLogit));
+    const sumExps = exps.reduce((a, b) => a + b, 0);
+    const probs = exps.map((v) => v / sumExps);
+
+    let score = 0;
+    for (let i = 0; i < probs.length; ++i) score += (i + 1) * probs[i];
+
+    tf.dispose([tensor, prediction]);
     return score;
   }
 
-  // ───────────────────────────────────────────────────────────────
-  // UI + Visual
-  // ───────────────────────────────────────────────────────────────
   function addBeautyScoreToImage(img, beautyScore) {
     const parent = img.parentElement;
     if (window.getComputedStyle(parent).position === "static") parent.style.position = "relative";
@@ -216,9 +242,9 @@
     const badge = document.createElement("div");
     badge.className = "beauty-score-badge";
 
-    const scoreValue = (beautyScore * 100).toFixed(1);
+    const scoreValue = beautyScore.toFixed(1);
     const scoreColor = getScoreColor(scoreValue, 0.9);
-    const badgeText = beautyScore === 0 ? "🚫 No Face Detected" : `🌟 ${scoreValue}/10`;
+    const badgeText = beautyScore === 0 ? "🚫 No Face Detected" : `🌟 ${scoreValue}/5`;
 
     badge.style.cssText = `
       position: absolute;
@@ -243,14 +269,14 @@
     img.style.borderRadius = "16px";
   }
 
-  function getScoreColor(score, alpha = 1) {
+  function getScoreColor(score, alpha) {
     score = parseFloat(score);
-    if (score >= 8.5) return `rgba(76,175,80,${alpha})`;
-    if (score >= 7.5) return `rgba(139,195,74,${alpha})`;
-    if (score >= 6.5) return `rgba(255,193,7,${alpha})`;
-    if (score >= 5.5) return `rgba(255,152,0,${alpha})`;
-    if (score === 0) return `rgba(180,180,180,${alpha})`;
-    return `rgba(244,67,54,${alpha})`;
+    if (score >= 4.5) return `rgba(76,175,80,${alpha})`;
+    if (score >= 3.5) return `rgba(139,195,74,${alpha})`;
+    if (score >= 2.5) return `rgba(255,193,7,${alpha})`;
+    if (score >= 1.5) return `rgba(255,152,0,${alpha})`;
+    if (score > 0) return `rgba(244,67,54,${alpha})`;
+    return `rgba(180,180,180,${alpha})`;
   }
 
   function showNotification(message, type = "info") {
@@ -279,33 +305,19 @@
     setTimeout(() => notification.remove(), 4000);
   }
 
-  // ───────────────────────────────────────────────────────────────
-  // Observer / Auto Processing
-  // ───────────────────────────────────────────────────────────────
   function setupAutoObserver() {
+    if (observer) observer.disconnect();
     let lastProfile = null;
-
-    const observer = new MutationObserver(() => {
+    observer = new MutationObserver(() => {
       const profiles = document.querySelectorAll('div[id^="profileColumn-"]');
       const currentProfile = profiles[profiles.length - 1];
       if (!currentProfile || currentProfile === lastProfile) return;
-
       lastProfile = currentProfile;
       const imgs = currentProfile.querySelectorAll('img[src*="images.prod.boo.dating"]');
       imgs.forEach((img) => processSingleProfileImage(img));
     });
-
     observer.observe(document.body, { childList: true, subtree: true });
   }
 
-  // ───────────────────────────────────────────────────────────────
-  // Bootstrap
-  // ───────────────────────────────────────────────────────────────
-  window.addEventListener("load", () => {
-    setupAutoObserver();
-    const interval = setInterval(() => {
-      if (!isInitialized) initializeModels();
-      else clearInterval(interval);
-    }, 1000);
-  });
+  window.addEventListener("load", onLoad);
 })();
