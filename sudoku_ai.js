@@ -1,41 +1,21 @@
 // ==UserScript==
-// @name         Sudoku AI
+// @name         Sudoku AI Solver
 // @namespace    rebo.sudoku.ai
 // @version      1.2
-// @description  Solves sudoku using HF digit classifier
+// @description  Automatically solves Sudoku puzzles using OCR and AI
 // @author       ReBo
 // @match        https://sudoku.com/*
 // @grant        none
+// @require      https://cdn.jsdelivr.net/npm/tesseract.js@5.0.1/dist/tesseract.min.js
 // ==/UserScript==
 
 window.addEventListener("load", function () {
-  let puzzle = Array.from({ length: 9 }, () => Array(9).fill(0));
-  let modelLoaded = false;
-  let classifier = null;
-
-  function loadClassifier(cb) {
-    if (modelLoaded) return cb();
-    if (!window.tf) {
-      let s = document.createElement("script");
-      s.src = "https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.18.0/dist/tf.min.js";
-      s.onload = () => loadClassifier(cb);
-      document.body.appendChild(s);
-      return;
-    }
-    window.tf.loadLayersModel("https://rebo-85.github.io/Model-Server/sudoku/model.json").then((m) => {
-      classifier = m;
-      modelLoaded = true;
-      cb();
-    });
-  }
-
-  function extractVGGCells(canvas) {
-    let ctx = canvas.getContext("2d");
+  function extractCellCanvases(canvas) {
     let w = canvas.width,
       h = canvas.height;
     let cellW = w / 9,
       cellH = h / 9;
-    let cells = [];
+    let canvases = [];
     for (let y = 0; y < 9; y++) {
       for (let x = 0; x < 9; x++) {
         let tmp = document.createElement("canvas");
@@ -53,140 +33,168 @@ window.addEventListener("load", function () {
           32,
           32
         );
-        let arr = tctx.getImageData(0, 0, 32, 32).data;
-        let px = [];
-        for (let i = 0; i < arr.length; i += 4) {
-          let v = (arr[i] + arr[i + 1] + arr[i + 2]) / 3;
-          // boost contrast
-          let norm = Math.max(0, Math.min(1, (v / 255 - 0.5) * 2 + 0.5));
-          px.push(norm);
-          px.push(norm);
-          px.push(norm);
-        }
-        cells.push(px);
+        canvases.push(tmp);
       }
     }
-    let out = [];
-    for (let i = 0; i < 81; i++) {
-      let cell = [];
-      for (let y = 0; y < 32; y++) {
-        let row = [];
-        for (let x = 0; x < 32; x++) {
-          let idx = (y * 32 + x) * 3;
-          row.push([cells[i][idx], cells[i][idx + 1], cells[i][idx + 2]]);
-        }
-        cell.push(row);
-      }
-      out.push(cell);
-    }
-    return out;
+    return canvases;
   }
 
-  function preprocessCanvas(srcCanvas) {
-    let tmp = document.createElement("canvas");
-    tmp.width = srcCanvas.width;
-    tmp.height = srcCanvas.height;
-    let ctx = tmp.getContext("2d");
-    ctx.drawImage(srcCanvas, 0, 0);
-    let img = ctx.getImageData(0, 0, tmp.width, tmp.height);
-    let d = img.data;
-    let contrast = 64; // more contrast
-    let f = (259 * (contrast + 255)) / (255 * (259 - contrast));
-    for (let i = 0; i < d.length; i += 4) {
-      let r = d[i],
-        g = d[i + 1],
-        b = d[i + 2];
-      let gray = 0.299 * r + 0.587 * g + 0.114 * b;
-      let v = f * (gray - 128) + 128;
-      v = Math.max(0, Math.min(255, v));
-      d[i] = d[i + 1] = d[i + 2] = v;
-    }
-    ctx.putImageData(img, 0, 0);
-    return tmp;
-  }
-
-  function classifyGridFromCanvas(cb) {
-    let cvs = document.querySelector("#game canvas");
-    if (!cvs) return cb(null);
-    loadClassifier(() => {
-      let proc = preprocessCanvas(cvs);
-      let cellImgs = extractVGGCells(proc);
-      let input = tf.tensor4d(cellImgs, [81, 32, 32, 3]);
-      classifier
-        .predict(input)
-        .array()
-        .then((preds) => {
-          let grid = [];
-          for (let i = 0; i < 9; i++) {
-            let row = [];
-            for (let j = 0; j < 9; j++) {
-              let idx = i * 9 + j;
-              let p = preds[idx];
-              let maxIdx = p.indexOf(Math.max(...p));
-              row.push(maxIdx === 0 ? 0 : maxIdx);
-            }
-            grid.push(row);
-          }
-          input.dispose();
-          cb(grid);
-        });
-    });
-  }
-
-  function inspect() {
-    classifyGridFromCanvas((grid) => {
-      if (!grid) return;
-      puzzle = grid;
-      console.log("Grid:", puzzle);
-    });
-  }
-
-  function solveSudoku(board) {
-    function isValid(board, row, col, num) {
-      for (let i = 0; i < 9; i++) {
-        if (board[row][i] === num || board[i][col] === num) return false;
-        const boxRow = 3 * Math.floor(row / 3) + Math.floor(i / 3);
-        const boxCol = 3 * Math.floor(col / 3) + (i % 3);
-        if (board[boxRow][boxCol] === num) return false;
-      }
-      return true;
-    }
-    function solve(board) {
-      for (let row = 0; row < 9; row++) {
-        for (let col = 0; col < 9; col++) {
-          if (board[row][col] === 0) {
-            for (let num = 1; num <= 9; num++) {
-              if (isValid(board, row, col, num)) {
-                board[row][col] = num;
-                if (solve(board)) return true;
-                board[row][col] = 0;
-              }
-            }
-            return false;
-          }
-        }
-      }
-      return true;
-    }
-    solve(board);
+  async function recognizeSudokuBoard(cellCanvases) {
+    let ocrTasks = cellCanvases.map((c) =>
+      Tesseract.recognize(c, "eng", {
+        tessedit_char_whitelist: "0123456789",
+        classify_bln_numeric_mode: 1,
+        tessedit_pageseg_mode: 10,
+      }).then(({ data: { text } }) => {
+        let digit = text.replace(/\D/g, "") || "0";
+        return Number(digit[0] || 0);
+      })
+    );
+    let flat = await Promise.all(ocrTasks);
+    let board = [];
+    for (let i = 0; i < 9; i++) board.push(flat.slice(i * 9, i * 9 + 9));
     return board;
   }
 
-  let sudokuBtn = document.createElement("button");
-  sudokuBtn.textContent = "Sudoku AI";
-  sudokuBtn.style.position = "fixed";
-  sudokuBtn.style.top = "12px";
-  sudokuBtn.style.right = "12px";
-  sudokuBtn.style.zIndex = 9999;
-  sudokuBtn.style.padding = "6px 14px";
-  sudokuBtn.style.background = "#222";
-  sudokuBtn.style.color = "#fff";
-  sudokuBtn.style.border = "none";
-  sudokuBtn.style.borderRadius = "4px";
-  sudokuBtn.style.cursor = "pointer";
-  document.body.appendChild(sudokuBtn);
+  // Create main button
+  let btn = document.createElement("button");
+  btn.textContent = "📷 OCR Sudoku";
+  btn.style.position = "fixed";
+  btn.style.top = "20px";
+  btn.style.right = "20px";
+  btn.style.zIndex = 10000;
+  btn.style.padding = "12px 20px";
+  btn.style.background = "linear-gradient(135deg, #667eea 0%, #764ba2 100%)";
+  btn.style.color = "white";
+  btn.style.border = "none";
+  btn.style.borderRadius = "8px";
+  btn.style.cursor = "pointer";
+  btn.style.fontSize = "14px";
+  btn.style.fontWeight = "600";
+  btn.style.boxShadow = "0 4px 12px rgba(0,0,0,0.3)";
+  btn.style.transition = "all 0.3s ease";
 
-  sudokuBtn.onclick = () => {
-    inspect();
+  btn.onmouseenter = () => {
+    btn.style.transform = "translateY(-2px)";
+    btn.style.boxShadow = "0 6px 16px rgba(0,0,0,0.4)";
   };
+  btn.onmouseleave = () => {
+    btn.style.transform = "translateY(0)";
+    btn.style.boxShadow = "0 4px 12px rgba(0,0,0,0.3)";
+  };
+
+  // Create status panel
+  let statusPanel = document.createElement("div");
+  statusPanel.style.position = "fixed";
+  statusPanel.style.top = "70px";
+  statusPanel.style.right = "20px";
+  statusPanel.style.zIndex = 10001;
+  statusPanel.style.background = "rgba(34, 34, 34, 0.95)";
+  statusPanel.style.color = "white";
+  statusPanel.style.padding = "16px";
+  statusPanel.style.borderRadius = "12px";
+  statusPanel.style.display = "none";
+  statusPanel.style.minWidth = "200px";
+  statusPanel.style.backdropFilter = "blur(10px)";
+  statusPanel.style.boxShadow = "0 8px 24px rgba(0,0,0,0.4)";
+  statusPanel.style.border = "1px solid rgba(255,255,255,0.1)";
+
+  // Status content
+  let statusContent = document.createElement("div");
+  statusContent.style.display = "flex";
+  statusContent.style.alignItems = "center";
+  statusContent.style.gap = "12px";
+
+  let spinner = document.createElement("div");
+  spinner.style.width = "20px";
+  spinner.style.height = "20px";
+  spinner.style.border = "2px solid rgba(255,255,255,0.3)";
+  spinner.style.borderTop = "2px solid white";
+  spinner.style.borderRadius = "50%";
+  spinner.style.animation = "spin 1s linear infinite";
+
+  let statusText = document.createElement("span");
+  statusText.textContent = "Processing board...";
+  statusText.style.fontSize = "14px";
+  statusText.style.fontWeight = "500";
+
+  statusContent.appendChild(spinner);
+  statusContent.appendChild(statusText);
+  statusPanel.appendChild(statusContent);
+
+  // Add CSS for spinner animation
+  const style = document.createElement("style");
+  style.textContent = `
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+  `;
+  document.head.appendChild(style);
+
+  btn.onclick = async () => {
+    let boardCanvas = document.querySelector("#game canvas");
+    if (!boardCanvas) {
+      showNotification("❌ No game board found!", "error");
+      return;
+    }
+
+    // Show processing status
+    statusPanel.style.display = "block";
+
+    try {
+      let cellCanvases = extractCellCanvases(boardCanvas);
+      let sudokuBoard = await recognizeSudokuBoard(cellCanvases);
+
+      // Hide status
+      statusPanel.style.display = "none";
+
+      // Copy to clipboard automatically
+      const boardString = JSON.stringify(sudokuBoard);
+      await navigator.clipboard.writeText(boardString);
+
+      console.log("Sudoku OCR board:", sudokuBoard);
+      showNotification("✅ Board copied to clipboard!", "success");
+    } catch (error) {
+      statusPanel.style.display = "none";
+      showNotification("❌ OCR failed! Try again.", "error");
+      console.error("OCR Error:", error);
+    }
+  };
+
+  function showNotification(message, type) {
+    // Remove existing notification if any
+    const existingNotif = document.querySelector(".sudoku-notification");
+    if (existingNotif) {
+      existingNotif.remove();
+    }
+
+    const notif = document.createElement("div");
+    notif.className = "sudoku-notification";
+    notif.textContent = message;
+    notif.style.position = "fixed";
+    notif.style.top = "20px";
+    notif.style.left = "50%";
+    notif.style.transform = "translateX(-50%)";
+    notif.style.background = type === "error" ? "#e74c3c" : "#2ecc71";
+    notif.style.color = "white";
+    notif.style.padding = "12px 24px";
+    notif.style.borderRadius = "8px";
+    notif.style.zIndex = 10003;
+    notif.style.fontWeight = "500";
+    notif.style.boxShadow = "0 4px 12px rgba(0,0,0,0.3)";
+    notif.style.transition = "all 0.3s ease";
+
+    document.body.appendChild(notif);
+
+    setTimeout(() => {
+      notif.style.opacity = "0";
+      notif.style.transform = "translateX(-50%) translateY(-20px)";
+      setTimeout(() => notif.remove(), 300);
+    }, 3000);
+  }
+
+  // Add elements to page
+  document.body.appendChild(btn);
+  document.body.appendChild(statusPanel);
 });
