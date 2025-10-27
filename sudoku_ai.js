@@ -91,7 +91,7 @@ window.addEventListener("load", function () {
 
   // Create main button
   let btn = document.createElement("button");
-  btn.textContent = "📷 OCR Sudoku";
+  btn.textContent = "🧠 AI Solve";
   btn.style.position = "fixed";
   btn.style.top = "20px";
   btn.style.right = "20px";
@@ -183,6 +183,7 @@ window.addEventListener("load", function () {
       // Hide status
       statusPanel.style.display = "none";
 
+      console.log("Sudoku board:", sudokuBoard);
       console.log("Sudoku solved board:", solved);
       showNotification("✅ Sudoku solved!", "success");
     } catch (error) {
