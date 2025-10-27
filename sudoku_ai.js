@@ -2,7 +2,7 @@
 // @name         Sudoku AI Solver
 // @namespace    rebo.sudoku.ai
 // @version      1.4
-// @description  Automatically solves Sudoku puzzles using OCR and AI (writes solution using keyboard simulation)
+// @description  Automatically solves Sudoku puzzles using OCR and AI
 // @author       ReBo
 // @match        https://sudoku.com/*
 // @grant        none
