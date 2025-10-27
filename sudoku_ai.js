@@ -1,37 +1,37 @@
 // ==UserScript==
 // @name         Sudoku AI Solver
 // @namespace    rebo.sudoku.ai
-// @version      1.2
-// @description  Automatically solves Sudoku puzzles using OCR and AI
+// @version      1.4
+// @description  Automatically solves Sudoku puzzles using OCR and AI (writes solution using keyboard simulation)
 // @author       ReBo
 // @match        https://sudoku.com/*
 // @grant        none
-// @require      https://cdn.jsdelivr.net/npm/tesseract.js@5.0.1/dist/tesseract.min.js
+// @require      https://cdn.jsdelivr.net/npm/tesseract.js@6.0.1/dist/tesseract.min.js
 // ==/UserScript==
 
 window.addEventListener("load", function () {
-  function extractCellCanvases(canvas) {
-    let w = canvas.width,
-      h = canvas.height;
+  function extractCellCanvases(boardCanvas) {
+    let w = boardCanvas.width,
+      h = boardCanvas.height;
     let cellW = w / 9,
       cellH = h / 9;
     let canvases = [];
     for (let y = 0; y < 9; y++) {
       for (let x = 0; x < 9; x++) {
         let tmp = document.createElement("canvas");
-        tmp.width = 32;
-        tmp.height = 32;
+        tmp.width = 64;
+        tmp.height = 64;
         let tctx = tmp.getContext("2d");
         tctx.drawImage(
-          canvas,
-          x * cellW + cellW * 0.18,
-          y * cellH + cellH * 0.18,
-          cellW * 0.64,
-          cellH * 0.64,
+          boardCanvas,
+          x * cellW + cellW * 0.08,
+          y * cellH + cellH * 0.08,
+          cellW * 0.84,
+          cellH * 0.84,
           0,
           0,
-          32,
-          32
+          64,
+          64
         );
         canvases.push(tmp);
       }
@@ -56,7 +56,6 @@ window.addEventListener("load", function () {
     return board;
   }
 
-  // Sudoku solver (minimal, adapted)
   function solveSudokuBoard(grid) {
     let board = grid.flat();
     function isValid(idx, val) {
@@ -89,7 +88,88 @@ window.addEventListener("load", function () {
     return solved;
   }
 
-  // Create main button
+  function sleep(ms) {
+    return new Promise((r) => setTimeout(r, ms));
+  }
+
+  function makeKeyboardEvent(type, key, code, keyCode) {
+    let ev = new KeyboardEvent(type, {
+      key: key,
+      code: code,
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+    });
+    try {
+      Object.defineProperty(ev, "keyCode", { value: keyCode });
+    } catch (e) {}
+    try {
+      Object.defineProperty(ev, "which", { value: keyCode });
+    } catch (e) {}
+    return ev;
+  }
+
+  async function simulateKey(key) {
+    let keyMap = {
+      1: ["Digit1", 49],
+      2: ["Digit2", 50],
+      3: ["Digit3", 51],
+      4: ["Digit4", 52],
+      5: ["Digit5", 53],
+      6: ["Digit6", 54],
+      7: ["Digit7", 55],
+      8: ["Digit8", 56],
+      9: ["Digit9", 57],
+      ArrowLeft: ["ArrowLeft", 37],
+      ArrowUp: ["ArrowUp", 38],
+      ArrowRight: ["ArrowRight", 39],
+      ArrowDown: ["ArrowDown", 40],
+      Backspace: ["Backspace", 8],
+      Delete: ["Delete", 46],
+      Enter: ["Enter", 13],
+      Escape: ["Escape", 27],
+    };
+    let [code, keyCode] = keyMap[key] || [key, key.charCodeAt(0)];
+    let kd = makeKeyboardEvent("keydown", key, code, keyCode);
+    let ku = makeKeyboardEvent("keyup", key, code, keyCode);
+    window.dispatchEvent(kd);
+    document.dispatchEvent(kd);
+    if (document.activeElement) document.activeElement.dispatchEvent(kd);
+    await sleep(20);
+    window.dispatchEvent(ku);
+    document.dispatchEvent(ku);
+    if (document.activeElement) document.activeElement.dispatchEvent(ku);
+    await sleep(20);
+  }
+
+  async function clickCell(boardCanvas, x, y) {
+    let rect = boardCanvas.getBoundingClientRect();
+    let cellWidthPx = rect.width / 9;
+    let cellHeightPx = rect.height / 9;
+    let centerX = rect.left + cellWidthPx * (x + 0.5);
+    let centerY = rect.top + cellHeightPx * (y + 0.5);
+    let el = document.elementFromPoint(centerX, centerY) || boardCanvas;
+    el.dispatchEvent(new MouseEvent("mousemove", { bubbles: true, clientX: centerX, clientY: centerY }));
+    el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, clientX: centerX, clientY: centerY }));
+    el.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, clientX: centerX, clientY: centerY }));
+    try {
+      boardCanvas.tabIndex = boardCanvas.tabIndex || -1;
+      boardCanvas.focus();
+    } catch (e) {}
+    await sleep(20);
+  }
+
+  async function writeAnswers(solved, boardCanvas, original) {
+    for (let y = 0; y < 9; y++) {
+      for (let x = 0; x < 9; x++) {
+        if (!original[y][x] && solved[y][x]) {
+          await clickCell(boardCanvas, x, y);
+          await simulateKey(solved[y][x]);
+        }
+      }
+    }
+  }
+
   let btn = document.createElement("button");
   btn.textContent = "🧠 AI Solve";
   btn.style.position = "fixed";
@@ -107,16 +187,6 @@ window.addEventListener("load", function () {
   btn.style.boxShadow = "0 4px 12px rgba(0,0,0,0.3)";
   btn.style.transition = "all 0.3s ease";
 
-  btn.onmouseenter = () => {
-    btn.style.transform = "translateY(-2px)";
-    btn.style.boxShadow = "0 6px 16px rgba(0,0,0,0.4)";
-  };
-  btn.onmouseleave = () => {
-    btn.style.transform = "translateY(0)";
-    btn.style.boxShadow = "0 4px 12px rgba(0,0,0,0.3)";
-  };
-
-  // Create status panel
   let statusPanel = document.createElement("div");
   statusPanel.style.position = "fixed";
   statusPanel.style.top = "70px";
@@ -127,105 +197,25 @@ window.addEventListener("load", function () {
   statusPanel.style.padding = "16px";
   statusPanel.style.borderRadius = "12px";
   statusPanel.style.display = "none";
-  statusPanel.style.minWidth = "200px";
-  statusPanel.style.backdropFilter = "blur(10px)";
-  statusPanel.style.boxShadow = "0 8px 24px rgba(0,0,0,0.4)";
-  statusPanel.style.border = "1px solid rgba(255,255,255,0.1)";
+  statusPanel.textContent = "Processing...";
 
-  // Status content
-  let statusContent = document.createElement("div");
-  statusContent.style.display = "flex";
-  statusContent.style.alignItems = "center";
-  statusContent.style.gap = "12px";
-
-  let spinner = document.createElement("div");
-  spinner.style.width = "20px";
-  spinner.style.height = "20px";
-  spinner.style.border = "2px solid rgba(255,255,255,0.3)";
-  spinner.style.borderTop = "2px solid white";
-  spinner.style.borderRadius = "50%";
-  spinner.style.animation = "spin 1s linear infinite";
-
-  let statusText = document.createElement("span");
-  statusText.textContent = "Processing board...";
-  statusText.style.fontSize = "14px";
-  statusText.style.fontWeight = "500";
-
-  statusContent.appendChild(spinner);
-  statusContent.appendChild(statusText);
-  statusPanel.appendChild(statusContent);
-
-  // Add CSS for spinner animation
-  const style = document.createElement("style");
-  style.textContent = `
-    @keyframes spin {
-      0% { transform: rotate(0deg); }
-      100% { transform: rotate(360deg); }
-    }
-  `;
-  document.head.appendChild(style);
+  document.body.appendChild(btn);
+  document.body.appendChild(statusPanel);
 
   btn.onclick = async () => {
     let boardCanvas = document.querySelector("#game canvas");
-    if (!boardCanvas) {
-      showNotification("❌ No game board found!", "error");
-      return;
-    }
-
-    // Show processing status
+    if (!boardCanvas) return alert("No Sudoku board found.");
     statusPanel.style.display = "block";
-
     try {
       let cellCanvases = extractCellCanvases(boardCanvas);
       let sudokuBoard = await recognizeSudokuBoard(cellCanvases);
       let solved = solveSudokuBoard(sudokuBoard);
-
-      // Hide status
+      await writeAnswers(solved, boardCanvas, sudokuBoard);
       statusPanel.style.display = "none";
-
-      console.log("Sudoku board:", sudokuBoard);
-      console.log("Sudoku solved board:", solved);
-      showNotification("✅ Sudoku solved!", "success");
-    } catch (error) {
+    } catch (e) {
+      console.error(e);
       statusPanel.style.display = "none";
-      showNotification("❌ OCR failed! Try again.", "error");
-      console.error("OCR Error:", error);
+      alert("❌ Failed to solve.");
     }
   };
-
-  function showNotification(message, type) {
-    // Remove existing notification if any
-    const existingNotif = document.querySelector(".sudoku-notification");
-    if (existingNotif) {
-      existingNotif.remove();
-    }
-
-    const notif = document.createElement("div");
-    notif.className = "sudoku-notification";
-    notif.textContent = message;
-    notif.style.position = "fixed";
-    notif.style.top = "20px";
-    notif.style.left = "50%";
-    notif.style.transform = "translateX(-50%)";
-    notif.style.background = type === "error" ? "#e74c3c" : "#2ecc71";
-    notif.style.color = "white";
-    notif.style.padding = "12px 24px";
-    notif.style.borderRadius = "8px";
-    notif.style.zIndex = 10003;
-    notif.style.fontWeight = "500";
-    notif.style.boxShadow = "0 4px 12px rgba(0,0,0,0.3)";
-    notif.style.transition = "all 0.3s ease";
-
-    document.body.appendChild(notif);
-
-    setTimeout(() => {
-      notif.style.opacity = "0";
-      notif.style.transform = "translateX(-50%) translateY(-20px)";
-      setTimeout(() => notif.remove(), 300);
-    }, 3000);
-  }
-
-  // Add elements to page
-  document.body.appendChild(btn);
-  document.body.appendChild(statusPanel);
 });
