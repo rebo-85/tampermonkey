@@ -21,7 +21,7 @@
   // === Core state ===
   const filters = {
     live: {
-      name: "LIVE posts",
+      name: "filter LIVE posts",
       enabled: true,
       icon: `<path d="M24 4a20 20 0 1 0 0 40 20 20 0 0 0 0-40Zm0 36a16 16 0 1 1 0-32 16 16 0 0 1 0 32Z"></path>`,
       shapeOn: `<path d="M17 17h14v14H17z"></path>`,
@@ -33,15 +33,6 @@
         el.style.height = "0";
         el.style.margin = "0";
       },
-    },
-    ads: {
-      name: "Sponsored ads",
-      enabled: false,
-      icon: `<path d="M24 4a20 20 0 1 0 0 40 20 20 0 0 0 0-40Zm0 36a16 16 0 1 1 0-32 16 16 0 0 1 0 32Z"></path>`,
-      shapeOn: `<path d="M16 24h16v4H16z"></path>`,
-      shapeOff: `<path d="M12 22h24v4H12z"></path>`,
-      check: (el) => /Sponsored/i.test(el.innerText),
-      apply: (el) => (el.style.display = "none"),
     },
   };
 
@@ -77,82 +68,44 @@
   log("Observer active");
 
   // === UI: toggle buttons container ===
-
-  // === UI: toggle buttons container ===
   const insertToggles = (container) => {
     const wrapper = document.createElement("div");
     wrapper.id = "purifier-wrapper";
     wrapper.className = "css-1q7o284-5e6d46e3--DivActionBarContainer egvv9qt0";
-    wrapper.style.display = "flex";
-    wrapper.style.gap = "8px";
 
     Object.entries(filters).forEach(([key, f]) => {
       const tooltipRef = document.createElement("div");
       tooltipRef.className = "TUXTooltip-reference";
-      tooltipRef.style.position = "relative";
 
       const btn = document.createElement("button");
       btn.className = "css-3vadej-5e6d46e3--StyledActionBarButton egvv9qt3";
-      btn.innerHTML = `
-        <div class="css-2kvp9s-5e6d46e3--StyledIconWrapper egvv9qt2">
-          <svg fill="currentColor" viewBox="0 0 48 48" width="1em" height="1em">
-            ${f.icon}
-            ${f.enabled ? f.shapeOn : f.shapeOff}
-          </svg>
-        </div>`;
+      btn.type = "button";
+      btn.setAttribute("data-purifier-toggle", key);
+      btn.setAttribute("data-e2e", "top-right-action-bar-get-coin");
 
-      let portal = document.querySelector("[data-floating-ui-portal]");
-      if (!portal) {
-        portal = document.createElement("div");
-        portal.setAttribute("data-floating-ui-portal", "");
-        document.body.appendChild(portal);
-      }
+      const iconWrap = document.createElement("div");
+      iconWrap.className = "css-2kvp9s-5e6d46e3--StyledIconWrapper egvv9qt2";
+      const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      svg.setAttribute("fill", "currentColor");
+      svg.setAttribute("color", "inherit");
+      svg.setAttribute("font-size", "16");
+      svg.setAttribute("viewBox", "0 0 48 48");
+      svg.setAttribute("width", "1em");
+      svg.setAttribute("height", "1em");
+      svg.innerHTML = f.icon;
+      iconWrap.appendChild(svg);
 
-      const tooltip = document.createElement("div");
-      tooltip.className = "TUXTooltip-tooltip TUXTooltip-tooltip--secondary TUXTooltip-tooltip--small";
-      tooltip.setAttribute("tabindex", "-1");
-      tooltip.setAttribute("role", "tooltip");
-      tooltip.style.zIndex = "4500";
-      tooltip.style.position = "absolute";
-      tooltip.style.left = "0px";
-      tooltip.style.top = "0px";
-      tooltip.style.transform = "translate(0, 36px)";
-      tooltip.style.display = "none";
+      const label = document.createElement("span");
+      label.className = "css-q269t6-5e6d46e3--StyledSpan egvv9qt1";
+      label.textContent = f.name;
 
-      const tooltipContent = document.createElement("div");
-      tooltipContent.className = "TUXTooltip-content P1-Medium";
-
-      const tooltipText = document.createElement("p");
-      tooltipText.className =
-        "TUXText TUXText--tiktok-sans TUXText--weight-medium css-16xepmg-5e6d46e3--StyledTUXText e1gw1eda0";
-      tooltipText.setAttribute("letter-spacing", "0.0938");
-      tooltipText.style.color = "inherit";
-      tooltipText.style.fontSize = "14px";
-      tooltipText.textContent = `${f.name}: ${f.enabled ? "ON" : "OFF"}`;
-
-      tooltipContent.appendChild(tooltipText);
-      tooltip.appendChild(tooltipContent);
-
+      btn.appendChild(iconWrap);
+      btn.appendChild(label);
       btn.onclick = () => {
         f.enabled = !f.enabled;
-        const path = btn.querySelector("path:last-of-type");
-        path.setAttribute("d", f.enabled ? getPathData(f.shapeOn) : getPathData(f.shapeOff));
-        tooltipText.textContent = `${f.name}: ${f.enabled ? "ON" : "OFF"}`;
-        log(`${f.enabled ? "✅ Enabled" : "🚫 Disabled"} ${f.name}`);
+        btn.classList.toggle("purifier-off", !f.enabled);
+        runFilters();
       };
-
-      btn.addEventListener("mouseenter", (e) => {
-        const rect = btn.getBoundingClientRect();
-        tooltip.style.left = rect.left + window.scrollX + "px";
-        tooltip.style.top = rect.bottom + window.scrollY + "px";
-        tooltip.style.transform = `translate(0, 0)`;
-        tooltip.style.display = "block";
-        portal.appendChild(tooltip);
-      });
-      btn.addEventListener("mouseleave", () => {
-        tooltip.style.display = "none";
-        if (portal.contains(tooltip)) portal.removeChild(tooltip);
-      });
 
       tooltipRef.appendChild(btn);
       wrapper.appendChild(tooltipRef);
@@ -160,7 +113,6 @@
     container.prepend(wrapper);
     log("UI toggles injected");
   };
-
   // === Helper: extract path data from SVG string ===
   const getPathData = (svgString) => {
     const match = svgString.match(/d="([^"]+)"/);
