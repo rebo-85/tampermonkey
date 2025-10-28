@@ -66,7 +66,7 @@
       console.log("[Boo Automatcher] Loading models...");
       showNotification("Loading AI model...");
 
-      model = await tf.loadGraphModel("https://rebo-85.github.io/Model-Server/aesthetic_rater/model.json");
+      model = await tf.loadGraphModel("https://rebo-85.github.io/CDN/tfjs_models/aesthetic_rater/model.json");
 
       await faceapi.nets.ssdMobilenetv1.loadFromUri("https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model/");
 
