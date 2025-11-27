@@ -93,8 +93,11 @@
 
   // === Proper button cloning logic ===
   const insertToggles = (container) => {
-    const baseContainer = container.querySelector(".css-1q7o284-5e6d46e3--DivActionBarContainer");
-    if (!baseContainer) return log("❌ No reference button container found.");
+    // Try to find a direct child div of #top-right-action-bar as the base container
+    let baseContainer = container.querySelector("div");
+    // Fallback: try to find any div with class containing 'DivActionBarContainer'
+    if (!baseContainer) baseContainer = container.querySelector("div[class*='DivActionBarContainer']");
+    if (!baseContainer) return log("❌ No reference button container found (check selector).");
 
     const purifierGroup = document.createElement("div");
     purifierGroup.className = "tiktok-purifier-group";
@@ -204,7 +207,7 @@
   // === Wait for TikTok UI ===
   const uiCheck = setInterval(() => {
     const actionBar = document.querySelector("#top-right-action-bar");
-    if (actionBar && actionBar.querySelector(".css-1q7o284-5e6d46e3--DivActionBarContainer")) {
+    if (actionBar && actionBar.querySelector("div[class*='DivActionBarContainer']")) {
       clearInterval(uiCheck);
       insertToggles(actionBar);
       log("TikTok Purifier initialized 🚀");
